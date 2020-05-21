@@ -1,0 +1,152 @@
+---
+title: "TSM u"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### MOE TSM sentences ###
+```{r message=FALSE, echo=TRUE, warning=FALSE, results='hold'}
+library(jiebaR)
+library(dplyr)
+library(readr)
+library(stringr)
+library(tidyverse)
+library(quanteda)
+library(tidytext)
+library(readxl)
+library(officer)
+library(flextable)
+
+lemma_tsm <- read_csv("詞目總檔.csv") %>% .$詞目
+writeLines(lemma_tsm, 'TSM_dict.txt')
+sentence_tsm <- read_csv("例句.csv") %>% 
+  select(c(1, 5, 6, 7)) %>%
+  rename(編號 = 例句編號, 標音 = 例句標音)
+
+sentence_tsm %>% head(10) %>% knitr::kable(align = 'c')
+
+sentence_tsm %>% nrow
+filter(sentence_tsm, str_detect(例句, '有')) %>% nrow
+
+```
+
+
+### TSM u ###
+
+**+noun**  
+(1) 厝內有人客。(existential)  
+(2) 我有一本冊。(possessive)  
+(3) 有人來矣。(presentational)  
+
+**+verb**  
+(4) 我有食飯矣。(perfective) [+telic, +bounded]  
+(5) 伊有食菸。(habitual) [-telic, +bounded]  
+(6) 花有紅。(emphatic) [-telic, -bounded]
+
+
+```{r message=FALSE, echo=TRUE, warning=FALSE, results='hold'}
+
+# initilize `jiebar`
+tagger <- worker(type = "tag",
+                 user = "TSM_dict.txt",
+                 symbol = T,
+                 bylines = F)
+
+segmenter <- worker(user = "TSM_dict.txt",
+                    symbol = T,
+                    bylines = F)
+
+# define own function
+tag_text <- function(x, jiebar){
+  segment(x, jiebar) %>%
+    paste(names(.), sep = "/", collapse = " ")
+}
+
+seg_text <- function(x, jiebar){
+  segment(x, jiebar) %>%
+    paste(collapse = " ")
+}
+
+sentence_tsm_tagged <- sentence_tsm %>%
+  mutate(斷詞 = map_chr(例句, seg_text, segmenter),
+           斷詞標記 = map_chr(例句, tag_text, tagger))
+
+tsm_u <- sentence_tsm_tagged %>%
+  filter(str_detect(斷詞標記, '\\b有/')) 
+
+tsm_u %>% head(10) %>% knitr::kable(align = 'c')
+
+nrow(tsm_u)
+
+```
+
+
+### contexts of TSM u ###
+```{r message=FALSE, echo=TRUE, warning=FALSE, results='hold'}
+
+corpus_tsm_u <- corpus(tsm_u,
+                    docid_field = '編號',
+                    text_field = '斷詞')
+
+kwic(corpus_tsm_u, '有') %>% 
+  mutate(context = tsm_u$斷詞標記[match(docname, tsm_u$編號)]) %>%
+  mutate(pinyin = tsm_u$標音[match(docname, tsm_u$編號)]) %>%
+  select(-from, -to, -pattern) %>%
+  head(50) %>% 
+  knitr::kable(align = 'c')
+
+```
+
+```{r message=FALSE, echo=TRUE, warning=FALSE, results='hold'}
+
+# define chunk tokenization function
+tokenizer_chunks <- function(input){
+  str_split(input, pattern = '(，/x)|(。/x)|(？/x)|(！/x)')
+}
+
+
+# convert text to pattern
+tsm_u %>%
+  select(編號, 斷詞標記) %>%
+  unnest_tokens(chunk, 斷詞標記,
+                token = tokenizer_chunks) %>% 
+  filter(nzchar(chunk)) %>%
+# unnest_tokens(pattern, chunck,
+#                token = function(x) str_extract(x, '\\b有/v\\s(\\w+/[^n\\s]+\\s)*?\\w+/(a|v)')) %>%
+  head(10) %>% 
+  knitr::kable(align = 'c')
+
+```
+
+### write docx files ###
+
+```{r message=FALSE, echo=TRUE, warning=FALSE, results='hide'}
+
+doc <- read_docx()
+for (i in 1:nrow(tsm_u)) {
+  doc %>%
+    body_add_par(tsm_u[i,]$標音) %>%
+    body_add_par(tsm_u[i,]$華語翻譯) %>%
+    body_add_par('')
+}
+
+df <- qflextable(head(sentence_tsm))
+body_add_flextable(doc, df)
+
+print(doc, target = 'TSM_u.docx')
+
+```
+
+### References ###
+
+鄭良偉. 1992. 台灣話和普通話的動相–時態系統. 中國境內語言暨語言學第一輯: 漢語方言, pp. 179–239.  
+曹逢甫 & 鄭縈. 1995. 談閩南語 “有” 的五種用法及其間的關係. 中國語文研究, 11, 155-167.
+
+Wu, J. S., & Zheng, Z. R. (2018, May). Toward a unified semantics for Ū in Ū+ situation in Taiwan southern min: A modal-aspectual account. In Workshop on Chinese Lexical Semantics (pp. 408-422). Springer, Cham.
+
+<https://davidgohel.github.io/officer/>  
+<https://github.com/g0v/moedict-data-twblg>
+
